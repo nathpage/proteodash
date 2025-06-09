@@ -24,13 +24,86 @@ library(UniprotR)
 library(protti)
 library(KSEAapp)
 
+#' Extract numeric sample ID from filename
+#'
+#' Extracts a numeric identifier embedded in a string, often used to parse sample names.
+#'
+#' @param sample_name Character. Name of the sample file.
+#'
+#' @return Extracted numeric string or NA if no match is found.
+#' @export
 extract_id <- function(sample_name) {
   str_extract(sample_name, "(?<=_)[0-9]+(?=\\.d)")
 }
 
+#' Validate or Create Metadata Table
+#'
+#' Validates a provided metadata table or generates a default one based on the column names of the data.
+#'
+#' If a valid metadata table is provided (i.e., non-null, contains a "sample" column, and has at least one row), it is returned unchanged.
+#' Otherwise, the function attempts to create a metadata table using column names from the data that start with "[" or "Z".
+#' A default condition of "Base" is assigned to each sample.
+#'
+#' @param meta Data frame or NULL. Existing metadata table to validate.
+#' @param data Data frame. Main dataset whose column names will be used to generate metadata if needed.
+#'
+#' @return A data frame with columns \code{sample} and \code{condition}. If metadata is invalid, a new table is generated.
+#' @export
+validate_or_create_meta <- function(meta, data) {
+  # Check if meta is valid
+  is_valid_meta <- !is.null(meta) && "sample" %in% colnames(meta) && nrow(meta) > 0
+  
+  if (is_valid_meta) {
+    return(meta)
+  }
+  
+  message("No valid metadata provided. Creating default metadata for columns starting with '[' or 'Z'.")
+  
+  sample_names <- grep("^\\[|^Z|^[0-9]{8}", colnames(data), value = TRUE)
+  
+  if (length(sample_names) == 0) {
+    stop("No column names starting with '[' found in the data.")
+  }
+  
+  meta_new <- data.frame(
+    sample = sample_names,
+    condition = "Base",
+    stringsAsFactors = FALSE
+  )
+  
+  # Optional debug output
+  #write.csv(meta_new, "generated_meta_debug.csv", row.names = FALSE)
+  
+  return(meta_new)
+}
+
+#' Plot coverage of proteins or phosphosites per sample
+#'
+#' Generates a bar plot showing the number of proteins or phosphosites per sample.
+#'
+#' @param data Data frame of expression/intensity values.
+#' @param meta Metadata table with sample and condition mapping.
+#' @param id Logical. If TRUE, adds sample IDs to the x-axis.
+#' @param color_package Logical. Whether to apply color palette.
+#'
+#' @return A ggplot bar chart printed to the console.
+#' @export
 coverage_plot <- function(data, meta, id=TRUE, color_package=TRUE) {
+  
+  # Check if metadata annotation was provided. If not, generate metadata where all samples are assigned to "Base" condition
+  meta <- validate_or_create_meta(meta, data)
+  
   data[data == 0] <- NA
-  conditions = unique(meta$condition)
+ 
+  # Ensure 'condition' column exists and fill in missing values with "Base"
+  if (!"condition" %in% colnames(meta) || all(is.na(meta$condition))) {
+    meta$condition <- "Base"
+  }
+  meta$condition[is.na(meta$condition)] <- "Base"
+  
+  conditions <- unique(meta$condition)
+  
+  
   meta$sample <- as.character(meta$sample)
   meta$id <- sapply(meta$sample, extract_id_or_number)
   
@@ -88,7 +161,18 @@ coverage_plot <- function(data, meta, id=TRUE, color_package=TRUE) {
   print(p)
 }
 
+#' Plot missing values distribution
+#'
+#' Visualizes the frequency of missing values per feature across all samples.
+#'
+#' @param data Data frame with expression values.
+#' @param meta Metadata table.
+#' @param bin Integer. Optional threshold to group features with excessive missing values.
+#'
+#' @return A ggplot bar plot of missing value frequencies.
+#' @export
 missing_value_plot <- function(data, meta, bin = 0) {
+  meta <- validate_or_create_meta(meta, data)
   annotated_columns <- meta$sample
   data_filtered <- data[, annotated_columns, drop = FALSE]
   data_filtered[data_filtered == 0] <- NA
@@ -131,7 +215,18 @@ missing_value_plot <- function(data, meta, bin = 0) {
   print(p)
 }
 
+#' Plot intensity distribution
+#'
+#' Draws density plots for mean log2 intensity values across conditions.
+#'
+#' @param data Data frame with log2-transformed intensities.
+#' @param meta Metadata table with conditions.
+#' @param color_package Logical. If TRUE, uses global color scheme.
+#'
+#' @return A density plot per condition.
+#' @export
 histo_int <- function(data, meta, color_package=TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
       plot_colors <- rep(plot_colors, length.out = length(unique(meta$condition)))
@@ -164,7 +259,19 @@ histo_int <- function(data, meta, color_package=TRUE) {
   print(p)
 }
 
+#' Boxplot of mean intensities per condition
+#'
+#' Plots a boxplot summarizing the mean intensities for each condition.
+#'
+#' @param data Data frame of log2 intensities.
+#' @param meta Metadata table with condition info.
+#' @param outliers Logical. Whether to display outliers.
+#' @param color_package Logical. Whether to apply global colors.
+#'
+#' @return Boxplot per condition showing intensity distributions.
+#' @export
 boxplot_int <- function(data, meta, outliers = FALSE, color_package = TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
       plot_colors <- rep(plot_colors, length.out = length(unique(meta$condition)))
@@ -201,7 +308,19 @@ boxplot_int <- function(data, meta, outliers = FALSE, color_package = TRUE) {
   print(p)
 }
 
+#' Coefficient of Variation (CV) Plot
+#'
+#' Plots CV for each condition to assess variability of expression data.
+#'
+#' @param data Data frame of expression values.
+#' @param meta Metadata table.
+#' @param outliers Logical. Whether to include outlier points.
+#' @param color_package Logical. Apply global color scheme.
+#'
+#' @return A boxplot showing distribution of CV across conditions.
+#' @export
 cov_plot <- function(data, meta, outliers = FALSE, color_package = TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
       plot_colors <- rep(plot_colors, length.out = length(unique(meta$condition)))
@@ -243,7 +362,20 @@ cov_plot <- function(data, meta, outliers = FALSE, color_package = TRUE) {
   print(p)
 }
 
+#' Boxplot per sample for individual intensity values
+#'
+#' Displays raw intensity values for each sample, grouped by condition.
+#'
+#' @param data Data frame of log2 intensities.
+#' @param meta Metadata table.
+#' @param outliers Logical. Whether to show outliers.
+#' @param id Logical. Show sample ID labels on x-axis.
+#' @param color_package Logical. Use global color scheme.
+#'
+#' @return Sample-wise boxplot.
+#' @export
 boxplot_int_single <- function(data, meta, outliers = FALSE, id=TRUE, color_package=TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
       plot_colors <- rep(plot_colors, length.out = length(unique(meta$condition)))
@@ -299,8 +431,18 @@ boxplot_int_single <- function(data, meta, outliers = FALSE, id=TRUE, color_pack
   return(p)
 }
 
-
+#' Principal Component Analysis (PCA) Plot
+#'
+#' Computes PCA and plots the first two components with explained variance.
+#'
+#' @param data Data matrix with rows as features and columns as samples.
+#' @param meta Metadata including sample and condition information.
+#' @param color_package Logical. Apply color scheme.
+#'
+#' @return A ggplot PCA scatter plot.
+#' @export
 pca_plot <- function(data, meta, color_package=TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
       plot_colors <- rep(plot_colors, length.out = length(unique(meta$condition)))
@@ -356,8 +498,19 @@ pca_plot <- function(data, meta, color_package=TRUE) {
   })
 }
 
-
+#' Abundance Plot (All Conditions)
+#'
+#' Ranks and plots log10 protein or phosphosite intensities across conditions.
+#'
+#' @param data Data frame containing expression values.
+#' @param meta Metadata including sample/condition info.
+#' @param workflow Character. "Protein" or "Phosphosite".
+#' @param color_package Logical. Use global color palette.
+#'
+#' @return A ggplot object showing ranked abundance by condition.
+#' @export
 abundance_plot <- function(data, meta, workflow = "Protein", color_package=TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   data[data == 0] <- NA
   if (exists("plot_colors")) {
     if (length(plot_colors) < length(unique(meta$condition))) {
@@ -430,7 +583,20 @@ abundance_plot <- function(data, meta, workflow = "Protein", color_package=TRUE)
   return(p)
 }
 
+#' Interactive Abundance Plot (Single Condition)
+#'
+#' Plots ranked intensity values for a single condition, highlighting searched proteins.
+#'
+#' @param data Data frame of expression values.
+#' @param meta Metadata table.
+#' @param condition Selected condition to filter.
+#' @param workflow "Protein" or "Phosphosite".
+#' @param search Optional vector of protein or site names to highlight.
+#'
+#' @return An interactive plotly plot.
+#' @export
 interactive_abundance_plot <- function(data, meta, condition, workflow="Protein", search=NULL) {
+  meta <- validate_or_create_meta(meta, data)
   data[data == 0] <- NA
   annotated_columns <- meta$sample[meta$condition == condition]
   
@@ -472,6 +638,14 @@ interactive_abundance_plot <- function(data, meta, condition, workflow="Protein"
   return(p_interactive)
 }
 
+#' Vertical Line for Plotly
+#'
+#' Creates a vertical line at the specified x-value.
+#'
+#' @param x Numeric x-position for the vertical line.
+#'
+#' @return A Plotly line object.
+#' @export
 vline <- function(x) {
   list(
     type = "line",
@@ -484,6 +658,14 @@ vline <- function(x) {
   )
 }
 
+#' Horizontal Line for Plotly
+#'
+#' Creates a horizontal line at the specified y-value.
+#'
+#' @param y Numeric y-position for the horizontal line.
+#'
+#' @return A Plotly line object.
+#' @export
 hline <- function(y) {
   list(
     type = "line",
@@ -496,6 +678,21 @@ hline <- function(y) {
   )
 }
 
+#' Volcano Plot (Interactive)
+#'
+#' Generates an interactive volcano plot comparing two conditions using t-tests (paired/unpaired).
+#'
+#' @param data Data frame with expression data.
+#' @param meta Metadata table with sample and condition info.
+#' @param condition1 Character. First condition to compare.
+#' @param condition2 Character. Second condition to compare.
+#' @param in_pval Numeric. P-value threshold for significance.
+#' @param in_log2fc Numeric. Log2 fold change threshold.
+#' @param workflow Character. Either "Protein" or "Phosphosite".
+#' @param paired Character. Either "Unpaired" or "Paired".
+#'
+#' @return A plotly interactive volcano plot.
+#' @export
 volcano_plot <- function(data, meta, condition1, condition2, in_pval = 0.05, in_log2fc = 1, workflow="Protein", paired = "Unpaired") {
   annotated_columns1 <- meta$sample[meta$condition == condition1]
   annotated_columns2 <- meta$sample[meta$condition == condition2]
@@ -644,6 +841,17 @@ volcano_plot <- function(data, meta, condition1, condition2, in_pval = 0.05, in_
       }
 }
 
+#' Filter data based on missing value criteria
+#'
+#' Filters out features based on minimum non-missing value counts per or across groups.
+#'
+#' @param data Data frame of expression data.
+#' @param meta Metadata table.
+#' @param num Integer. Minimum required values per condition.
+#' @param filterops Character. Either "per group" or "in at least one group".
+#'
+#' @return Filtered data frame.
+#' @export
 filter_data <- function(data, meta, num, filterops = "per group") {
   meta$id <- sapply(meta$sample, extract_id)
   meta <- meta %>%
@@ -674,6 +882,19 @@ filter_data <- function(data, meta, num, filterops = "per group") {
   return(filtered_data)
 }
 
+#' Identify significantly differentially expressed genes
+#'
+#' Extracts up- and down-regulated genes based on adjusted p-value and log2 fold change.
+#'
+#' @param data Data frame with expression data.
+#' @param meta Metadata table.
+#' @param condition1 First condition to compare.
+#' @param condition2 Second condition to compare.
+#' @param in_pval P-value threshold.
+#' @param in_log2fc Log2 fold change threshold.
+#'
+#' @return A list with vectors of upregulated and downregulated gene names.
+#' @export
 different_genes <- function(data, meta, condition1, condition2, in_pval = 0.05, in_log2fc = 1) {
   annotated_columns1 <- meta$sample[meta$condition == condition1]
   annotated_columns2 <- meta$sample[meta$condition == condition2]
@@ -729,6 +950,17 @@ different_genes <- function(data, meta, condition1, condition2, in_pval = 0.05, 
   return(list(Upregulated = upregulated_genes, Downregulated = downregulated_genes))
 }
 
+#' Perform GO Enrichment Analysis
+#'
+#' Runs gene ontology enrichment analysis via gprofiler2 for a gene list.
+#'
+#' @param gene_list Character vector of gene symbols.
+#' @param top_n Integer. Number of top gene sets to return.
+#' @param min_num Minimum term size to include.
+#' @param max_num Maximum term size to include.
+#'
+#' @return A filtered and sorted enrichment results table.
+#' @export
 enrichment_analysis <- function(gene_list, top_n = 10, min_num=20, max_num=300) {
   gene_list <- na.omit(gene_list)
   res <- gost(query = gene_list, organism = "hsapiens", sources = c("GO:CC", "GO:BP", "GO:MF"), user_threshold = 0.05, correction_method="g_SCS")
@@ -766,6 +998,18 @@ enrichment_analysis <- function(gene_list, top_n = 10, min_num=20, max_num=300) 
     ggtitle("Gene Set Enrichment Analysis") 
 }
 
+#' Correlation Heatmap
+#'
+#' Computes and plots sample-to-sample Pearson correlation matrix.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata with sample and condition columns.
+#' @param method Logical. If TRUE, uses ellipses. Else, uses colored tiles.
+#' @param id Logical. Toggle sample IDs on x-axis.
+#' @param full_range Logical. Set color range from -1 to 1.
+#'
+#' @return Correlation plot using corrplot.
+#' @export
 corr_plot <- function(data, meta, method=FALSE, id=TRUE, full_range=FALSE) {
   conditions <- unique(meta$condition)
   meta$sample <- as.character(meta$sample)
@@ -822,6 +1066,14 @@ corr_plot <- function(data, meta, method=FALSE, id=TRUE, full_range=FALSE) {
   }
 }
 
+#' Rename Standard Column Names
+#'
+#' Harmonizes column names across different proteomics file formats.
+#'
+#' @param df Input data frame to be standardized.
+#'
+#' @return Data frame with renamed and optionally filtered columns.
+#' @export
 rename_cols <- function(df) {
   if ("PG.ProteinNames" %in% names(df)) {
     names(df)[names(df) == "PG.ProteinNames"] <- "ProteinNames"
@@ -902,8 +1154,18 @@ rename_cols <- function(df) {
   return(df)
 }
 
-
+#' Heatmap Plot
+#'
+#' Generates a clustered heatmap from expression data using pheatmap.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata with sample/condition mappings.
+#' @param id Logical. Whether to annotate sample IDs in column names.
+#'
+#' @return A pheatmap object.
+#' @export
 heatmap_plot <- function(data, meta, id=TRUE) {
+  meta <- validate_or_create_meta(meta, data)
   conditions = unique(meta$condition)
   meta$sample <- as.character(meta$sample)
   meta$id <- sapply(meta$sample, extract_id)
@@ -974,6 +1236,15 @@ heatmap_plot <- function(data, meta, id=TRUE) {
   return(p)
 }
 
+#' Precursor-Level Missing Value Plot
+#'
+#' Visualizes missing values at the precursor level.
+#'
+#' @param data2 Precursor quantity data from MaxQuant.
+#' @param meta Metadata with sample identifiers.
+#'
+#' @return A ggplot bar chart showing distribution of missing values.
+#' @export
 missing_value_plot_prec <- function(data2, meta) {
   data2 <- data2 %>%
     pivot_wider(
@@ -1008,6 +1279,16 @@ missing_value_plot_prec <- function(data2, meta) {
   print(p)
 }
 
+#' Missing Value Plot - Peptide Level
+#'
+#' Creates a bar chart showing the number of missing values per peptide feature.
+#'
+#' @param data2 Data frame with peptide-level data.
+#' @param meta Metadata table.
+#' @param bin Optional integer to bin missing value counts.
+#'
+#' @return A ggplot object.
+#' @export
 missing_value_plot_pep <- function(data2, meta, bin=0) {
   if ("File.Name" %in% names(df)){
     data2_names <- unique(data2$File.Name)
@@ -1085,6 +1366,16 @@ missing_value_plot_pep <- function(data2, meta, bin=0) {
   }
 }
 
+#' Peptide-Level Coverage Plot
+#'
+#' Visualizes the count of identified peptides per sample.
+#'
+#' @param data2 Data frame with peptide intensities.
+#' @param meta Metadata table with sample info.
+#' @param id Logical. Whether to display sample IDs.
+#'
+#' @return A ggplot bar chart.
+#' @export
 coverage_plot_pep <- function(data2, meta, id = TRUE) {
   if ("File.Name" %in% names(df)){
     data2_names <- unique(data2$File.Name)
@@ -1195,6 +1486,18 @@ coverage_plot_pep <- function(data2, meta, id = TRUE) {
   }
 }
 
+#' Retention Time vs Predicted RT Plot
+#'
+#' Plots actual vs predicted retention times using multiple visualization types.
+#'
+#' @param data2 Data frame with `RT` and `Predicted.RT` columns.
+#' @param meta Metadata list (used for title).
+#' @param method One of "Scatter Plot", "Density Plot", or "Hexbin Plot".
+#' @param add_line Logical. Whether to add identity line.
+#' @param bins Number of bins (for hexbin).
+#'
+#' @return A ggplot2 object.
+#' @export
 RTvspredRT_plot <- function(data2, meta, method="Hexbin Plot", add_line=FALSE, bins=1000){
   x = data2$Predicted.RT
   y = data2$RT
@@ -1229,12 +1532,28 @@ RTvspredRT_plot <- function(data2, meta, method="Hexbin Plot", add_line=FALSE, b
   print(plot)
 }
 
+#' Clear All Plots from Device
+#'
+#' Iteratively closes all open graphics devices.
+#'
+#' @return NULL
+#' @export
 clear_all_plots <- function() {
   while (dev.cur() > 1) {
     dev.off()
   }
 }
 
+#' Plot Modification Counts per Sample
+#'
+#' Visualizes the frequency of common modifications (e.g., carbamidomethylation, oxidation, acetylation).
+#'
+#' @param data2 Data frame with peptide-level data.
+#' @param meta Metadata table.
+#' @param id Logical. Whether to display sample IDs.
+#'
+#' @return A ggplot bar plot.
+#' @export
 modification_plot <- function(data2, meta, id=TRUE){
   data2_names <- unique(data2$File.Name)
   for (name in data2_names) {
@@ -1322,6 +1641,14 @@ modification_plot <- function(data2, meta, id=TRUE){
     scale_fill_manual(values = c("Carbamylation" = "blue", "Oxidation" = "red", "Acetylation" = "green"), name = "Modification")
 }
 
+#' Extract Sample ID or Number
+#'
+#' Tries to extract numeric ID from a sample name; fallback to trailing number.
+#'
+#' @param name Character string (e.g., filename or sample label).
+#'
+#' @return Extracted numeric ID or suffix.
+#' @export
 extract_id_or_number <- function(name) {
   id <- extract_id(name)
   if (is.na(id)) {
@@ -1331,6 +1658,16 @@ extract_id_or_number <- function(name) {
   return(id)
 }
 
+#' Missed Cleavage Plot
+#'
+#' Visualizes percentage of peptides with 1, 2, or more missed cleavages.
+#'
+#' @param data2 Data frame with peptide intensities.
+#' @param meta Metadata.
+#' @param id Logical. Whether to label x-axis by sample ID.
+#'
+#' @return A stacked bar plot with labels.
+#' @export
 missed_cl_plot <- function(data2, meta, id = TRUE) {
   data2_names <- unique(data2$File.Name)
   for (name in data2_names) {
@@ -1424,6 +1761,18 @@ missed_cl_plot <- function(data2, meta, id = TRUE) {
               colour = "white")
 }
 
+#' Compare Protein Expression Across Conditions (Boxplot)
+#'
+#' Plots a boxplot comparing one protein/phosphosite across user-selected conditions.
+#'
+#' @param data Expression data.
+#' @param meta Metadata.
+#' @param conditions Vector of selected conditions.
+#' @param inputs Selected protein/phosphosite name.
+#' @param workflow "Protein" or "Phosphosite".
+#'
+#' @return A ggplot boxplot.
+#' @export
 compare_prot_box <- function(data, meta, conditions, inputs, workflow="Protein") {
   condition_samples <- lapply(conditions, function(cond) {
     samples <- meta$sample[meta$condition == cond]
@@ -1490,6 +1839,19 @@ compare_prot_box <- function(data, meta, conditions, inputs, workflow="Protein")
   return(boxplot)
 }
 
+#' Compare Protein Expression Across Samples (Line Plot)
+#'
+#' Plots intensity values of selected proteins across samples with condition coloring.
+#'
+#' @param data Expression data.
+#' @param meta Metadata.
+#' @param conditions Vector of selected conditions.
+#' @param inputs Vector of proteins or sites.
+#' @param id Logical. Annotate sample IDs.
+#' @param workflow "Protein" or "Phosphosite".
+#'
+#' @return A ggplot line plot.
+#' @export
 compare_prot_line <- function(data, meta, conditions, inputs, id=TRUE, workflow="Protein") {
   meta$sample <- as.character(meta$sample)
   meta$id <- sapply(meta$sample, extract_id_or_number)
@@ -1561,6 +1923,16 @@ compare_prot_line <- function(data, meta, conditions, inputs, id=TRUE, workflow=
   return(line_plot)
 }
 
+#' Collapse Peptide-Level Data
+#'
+#' Collapses peptide-level data using the `peptideCollapse()` function.
+#'
+#' @param data Data frame of input values.
+#' @param cutoff Numeric. Collapse threshold.
+#' @param collapse_level Character. Collapse grouping level.
+#'
+#' @return Collapsed data as a data frame with numeric values.
+#' @export
 RpeptideCollapse <- function(data, cutoff=0.75, collapse_level="PG"){
   colnames(data)[colnames(data) == "EG.TotalQuantity..Settings."] <- "EG.TotalQuantity (Settings)"
   collapse_data = as.data.frame(peptideCollapse(data, cutoff = cutoff, collapse_level = collapse_level))
@@ -1584,6 +1956,15 @@ RpeptideCollapse <- function(data, cutoff=0.75, collapse_level="PG"){
   return(collapse_summary)
 }
 
+#' Log2 Transform Intensity Data
+#'
+#' Applies log2 transformation to intensity columns.
+#'
+#' @param data Raw intensity data.
+#' @param meta Metadata with sample column names.
+#'
+#' @return Data frame with log2-transformed intensities.
+#' @export
 log2_transform_data <- function(data, meta) {
   annotated_columns = meta$sample
   data_filtered = data[, annotated_columns, drop = FALSE]
@@ -1594,6 +1975,15 @@ log2_transform_data <- function(data, meta) {
   return(combined_data)
 }
 
+#' Inverse Log2 Transform Data
+#'
+#' Converts log2-transformed values back to linear scale.
+#'
+#' @param data Log2 data.
+#' @param meta Metadata with sample names.
+#'
+#' @return Linearly scaled data.
+#' @export
 inverseof_log2_transform_data <- function(data, meta) {
   annotated_columns = meta$sample
   log2_data = data[, annotated_columns, drop = FALSE]
@@ -1603,6 +1993,20 @@ inverseof_log2_transform_data <- function(data, meta) {
   return(combined_data)
 }
 
+#' Impute Missing Values
+#'
+#' Performs missing value imputation using Gaussian distribution.
+#'
+#' @param data Input matrix.
+#' @param meta Metadata table.
+#' @param q Quantile cutoff.
+#' @param adj_std Adjustment factor for SD.
+#' @param ret Return mode: 0 = data, 1-3 = plots.
+#' @param sample_wise Logical. If TRUE, imputes column-wise.
+#' @param seed Random seed.
+#'
+#' @return Imputed data or diagnostic plot.
+#' @export
 impute_values <- function(data, meta, q=0.01, adj_std=1, ret=0, sample_wise=F, seed=69){
   set.seed(seed)
   data[data == 0] <- NA
@@ -1695,7 +2099,14 @@ impute_values <- function(data, meta, q=0.01, adj_std=1, ret=0, sample_wise=F, s
   }
 }
 
-
+#' Read Data File
+#'
+#' Wrapper to read .csv, .tsv, .txt, or .xlsx and standardize columns.
+#'
+#' @param file Path to the file.
+#'
+#' @return Data frame with standardized column names.
+#' @export
 read_data <- function(file) {
   ext <- tools::file_ext(file)
   
@@ -1728,6 +2139,15 @@ read_data <- function(file) {
   return(df)
 }
 
+#' Simple Phosphosite Summary Plot
+#'
+#' Plots phosphoprotein, phosphopeptide, and phosphosite counts.
+#'
+#' @param data Data frame with phosphosite info.
+#' @param filter Minimum PTM localization score.
+#'
+#' @return A ggplot summary plot.
+#' @export
 simple_phos_site_plot <- function(data, filter=0) {
   data = data[data$PTM_localization >= filter,]
   phosprot = length(unique(data$Protein_group))
@@ -1757,6 +2177,17 @@ simple_phos_site_plot <- function(data, filter=0) {
           axis.ticks.x = element_blank())
 }
 
+#' Prepare KSEA Input Table
+#'
+#' Prepares phosphosite data for KSEA by calculating log2 fold changes.
+#'
+#' @param data Phosphosite-level data.
+#' @param meta Metadata table.
+#' @param condition1 Condition A.
+#' @param condition2 Condition B.
+#'
+#' @return A data frame with `site sequence` and `log fold change`.
+#' @export
 prepare_KSEA <- function(data, meta, condition1, condition2) {
   annotated_columns1 <- meta$sample[meta$condition == condition1]
   annotated_columns2 <- meta$sample[meta$condition == condition2]
@@ -1781,12 +2212,28 @@ prepare_KSEA <- function(data, meta, condition1, condition2) {
   return(data)
 }
 
+#' Prepare Kinase Tree Enrichment Scores
+#'
+#' Extracts kinase and log2 enrichment values.
+#'
+#' @param data Data frame with kinase enrichment values.
+#'
+#' @return Data frame with columns for kinase and enrichment values.
+#' @export
 prepare_tree_data_es <- function(data){
   data <- data %>%
     select(kinase, dominant_enrichment_value_log2)
   return(data)
 }
 
+#' Prepare Kinase Tree P-Values
+#'
+#' Formats adjusted p-values for kinase tree visualization.
+#'
+#' @param data Data frame with kinase analysis.
+#'
+#' @return Data frame with rounded adjusted p-values.
+#' @export
 prepare_tree_data_pv <- function(data) {
   data <- data %>%
     select(kinase, dominant_adjusted_p_value_log10_abs) %>%
@@ -1794,6 +2241,16 @@ prepare_tree_data_pv <- function(data) {
   return(data)
 }
 
+#' Phosphosite Class Coverage Plot
+#'
+#' Plots number of class I and non-class I phosphosites per sample.
+#'
+#' @param data Phosphosite-level data.
+#' @param meta Metadata with sample/condition info.
+#' @param id Logical. Show IDs in x-axis.
+#'
+#' @return A ggplot bar chart.
+#' @export
 phossite_coverage_plot <- function(data, meta, id=FALSE){
   conditions <- unique(meta$condition)
   meta$sample <- as.character(meta$sample)
@@ -1841,6 +2298,16 @@ phossite_coverage_plot <- function(data, meta, id=FALSE){
     )
 }
 
+#' Heatmap Without Missing Values
+#'
+#' Filters out rows with missing values and plots z-score normalized heatmap.
+#'
+#' @param data Data matrix.
+#' @param meta Metadata table.
+#' @param id Logical. Annotate sample IDs.
+#'
+#' @return A pheatmap object.
+#' @export
 heatmap_plot_nmv <- function(data, meta, id=TRUE) {
   conditions = unique(meta$condition)
   meta$sample <- as.character(meta$sample)
@@ -1872,6 +2339,21 @@ heatmap_plot_nmv <- function(data, meta, id=TRUE) {
   return(p)
 }
 
+#' Generate Volcano Data Table
+#'
+#' Returns a table of log2 fold change and p-values with classification labels.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata.
+#' @param condition1 First group.
+#' @param condition2 Second group.
+#' @param in_pval Threshold for adjusted p-value.
+#' @param in_log2fc Threshold for log2 fold change.
+#' @param workflow "Protein" or "Phosphosite".
+#' @param paired "Paired" or "Unpaired".
+#'
+#' @return Annotated volcano data table.
+#' @export
 volcano_data_f <- function(data, meta, condition1, condition2, in_pval = 0.05, in_log2fc = 1, workflow="Protein", paired = "Unpaired") {
   data[data == 0] <- NA
   annotated_columns1 <- meta$sample[meta$condition == condition1]
@@ -1957,6 +2439,15 @@ volcano_data_f <- function(data, meta, condition1, condition2, in_pval = 0.05, i
   return(volcano_data)
 }
 
+#' Kinase Volcano Plot
+#'
+#' Plots log2 enrichment vs -log10 adjusted p-value for kinase analysis.
+#'
+#' @param data Kinase data table.
+#' @param in_pval P-value cutoff.
+#'
+#' @return A plotly volcano plot.
+#' @export
 kinase_volcano <- function(data, in_pval = 0.1){
   log10_pval_thresh <- -log10(in_pval)
   
@@ -2003,6 +2494,17 @@ kinase_volcano <- function(data, in_pval = 0.1){
   return(plotly_plot)
 }
 
+#' Visualize Peptide Coverage
+#'
+#' Prints aligned peptide sequences on protein sequence from FASTA.
+#'
+#' @param data Peptide-level data.
+#' @param protein Protein identifier.
+#' @param chunk_size Integer. Number of characters per line.
+#' @param db FASTA reference (data frame).
+#'
+#' @return Printed sequence alignment in console.
+#' @export
 vis_coverage <- function(data, protein, chunk_size=30, db){
   #Data
   data = subset(data, ProteinNames == protein)
@@ -2083,6 +2585,16 @@ vis_coverage <- function(data, protein, chunk_size=30, db){
   }
 }
 
+#' 3D Protein Model Visualization
+#'
+#' Highlights observed peptides in a 3D protein structure model from PDB.
+#'
+#' @param data Peptide-level data.
+#' @param protein Protein name to visualize.
+#' @param db FASTA reference with protein sequences.
+#'
+#' @return A r3dmol object for interactive viewing.
+#' @export
 model_3d <- function(data, protein, db){
   data <- data[data$ProteinNames == protein, ]
   uniprot_ids <- unique(data$PG.ProteinAccessions)
@@ -2120,6 +2632,15 @@ model_3d <- function(data, protein, db){
   view
 }
 
+#' Match Volcano and Original Phosphosite Data
+#'
+#' Annotates volcano output with original sequence and gene/protein info.
+#'
+#' @param volc_data Output from volcano_data_f().
+#' @param org_data Raw phosphosite input data.
+#'
+#' @return Merged annotation table.
+#' @export
 match_volc_and_org_data <- function(volc_data, org_data) {
   volc_data <- volc_data %>%
     rename(PTM_Collapse_key = Phossite)
@@ -2154,6 +2675,18 @@ match_volc_and_org_data <- function(volc_data, org_data) {
   return(matched_data)
 }
 
+#' Kinact Kinase Activity Plot
+#'
+#' Plots z-scores of kinases from KSEA for bar chart visualization.
+#'
+#' @param matched_data Annotated phosphosite table.
+#' @param top_n Show top N or bottom -N kinases by score.
+#' @param NetworKIN Logical. Include NetworKIN predictions.
+#' @param NetworKIN.cutoff Score threshold.
+#' @param m.cutoff Minimum phosphosite count per kinase.
+#'
+#' @return An interactive plotly object.
+#' @export
 kinact_kinase_activity <- function(matched_data, top_n = 0, NetworKIN=FALSE, NetworKIN.cutoff=5, m.cutoff=5) {
   KSEA_scores = KSEA.Scores(KSData, matched_data, NetworKIN=NetworKIN, NetworKIN.cutoff=NetworKIN.cutoff)
   
@@ -2201,6 +2734,16 @@ kinact_kinase_activity <- function(matched_data, top_n = 0, NetworKIN=FALSE, Net
   return(plotly_plot)
 }
 
+#' Downstream Phosphosite Volcano Plot
+#'
+#' Highlights phosphosites associated with one kinase in volcano plot.
+#'
+#' @param matched_data Phosphosite-annotated table.
+#' @param Kinase Gene name of kinase.
+#' @param NetworKIN Logical. Filter for NetworKIN-supported interactions.
+#'
+#' @return A plotly volcano plot.
+#' @export
 downstream_phossite_volc <- function(matched_data, Kinase, NetworKIN = FALSE){
   new_data = KSEA.KS_table(KSData, matched_data, NetworKIN = NetworKIN)
   
@@ -2243,6 +2786,14 @@ downstream_phossite_volc <- function(matched_data, Kinase, NetworKIN = FALSE){
   return(plotly_volcano)
 }
 
+#' Initialize Global Color Palette
+#'
+#' Sets the global `plot_colors` variable based on pre-defined schemes.
+#'
+#' @param color Character. One of: Default, Default16, Warm/Cold, Black/Grey, Yue7.
+#'
+#' @return None. Modifies `plot_colors` in global environment.
+#' @export
 init_colors <- function(color){
   if (color == "Default") {
     rm(list = "plot_colors")
@@ -2257,7 +2808,17 @@ init_colors <- function(color){
   }
 }
 
-
+#' Summary Coverage Plot
+#'
+#' Displays bar plot with mean and SD of protein/phosphosite counts per condition.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata with sample and condition mappings.
+#' @param id Logical. Show sample IDs.
+#' @param color_package Logical. Apply color palette.
+#'
+#' @return A ggplot summary bar chart with error bars and jitter points.
+#' @export
 coverage_plot_summary <- function(data, meta, id=TRUE, color_package=TRUE) {
   data[data == 0] <- NA
   conditions <- unique(meta$condition)
@@ -2340,7 +2901,16 @@ coverage_plot_summary <- function(data, meta, id=TRUE, color_package=TRUE) {
   print(p)
 }
 
-
+#' Phosphosite Coverage Summary Plot
+#'
+#' Plots mean ± SD of class I and non-class I phosphosites across conditions.
+#'
+#' @param data Data frame with phosphosite intensities.
+#' @param meta Metadata with sample/condition mapping.
+#' @param id Logical. Annotate sample IDs.
+#'
+#' @return A grouped bar chart with error bars and sample-level jitter.
+#' @export
 phossite_coverage_plot_summary <- function(data, meta, id=FALSE){
   conditions <- unique(meta$condition)
   meta$sample <- as.character(meta$sample)
@@ -2415,6 +2985,22 @@ phossite_coverage_plot_summary <- function(data, meta, id=FALSE){
     )
 }
 
+#' Volcano Plot
+#'
+#' Interactive volcano plot for differential expression analysis.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata table.
+#' @param condition1 First condition/group.
+#' @param condition2 Second condition/group.
+#' @param in_pval Significance threshold.
+#' @param in_log2fc Fold-change threshold.
+#' @param workflow Data level: 'Protein' or 'Phosphosite'.
+#' @param paired Test type: 'Paired' or 'Unpaired'.
+#' @param uncorrected Logical. Use raw p-values.
+#'
+#' @return Plotly interactive volcano plot.
+#' @export
 volcano_plot <- function(data, meta, condition1, condition2, in_pval = 0.05, in_log2fc = 1, workflow="Protein", paired = "Unpaired", uncorrected = FALSE) {
   annotated_columns1 <- meta$sample[meta$condition == condition1]
   annotated_columns2 <- meta$sample[meta$condition == condition2]
@@ -2573,6 +3159,14 @@ volcano_plot <- function(data, meta, condition1, condition2, in_pval = 0.05, in_
   }
 }
 
+#' Volcano Data Frame
+#'
+#' Tabulates DE results including log2 fold change and p-value significance.
+#'
+#' @inheritParams volcano_plot
+#'
+#' @return Annotated data frame for volcano analysis.
+#' @export
 volcano_data_f <- function(data, meta, condition1, condition2, in_pval = 0.05, in_log2fc = 1, workflow="Protein", paired = "Unpaired", uncorrected = FALSE) {
   data[data == 0] <- NA
   annotated_columns1 <- meta$sample[meta$condition == condition1]
@@ -2668,6 +3262,18 @@ volcano_data_f <- function(data, meta, condition1, condition2, in_pval = 0.05, i
   return(volcano_data)
 }
 
+#' t-SNE Dimensionality Reduction Plot
+#'
+#' Performs and visualizes t-SNE embedding of expression data.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata table.
+#' @param color_package Use global color vector.
+#' @param perplexity tSNE perplexity.
+#' @param max_iter tSNE iterations.
+#'
+#' @return ggplot object of tSNE embedding.
+#' @export
 tsne_plot <- function(data, meta, color_package = TRUE, perplexity = 30, max_iter = 1000) {
   if (!requireNamespace("Rtsne", quietly = TRUE)) {
     stop("The 'Rtsne' package is required for t-SNE. Please install it with install.packages('Rtsne').")
@@ -2736,7 +3342,19 @@ tsne_plot <- function(data, meta, color_package = TRUE, perplexity = 30, max_ite
   })
 }
 
-
+#' UMAP Dimensionality Reduction Plot
+#'
+#' Performs and visualizes UMAP embedding of samples.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata table.
+#' @param color_package Use global color vector.
+#' @param n_neighbors UMAP nearest neighbors.
+#' @param min_dist UMAP minimum distance.
+#' @param metric Distance metric.
+#'
+#' @return ggplot UMAP object.
+#' @export
 umap_plot <- function(data, meta, color_package = TRUE, n_neighbors = 15, min_dist = 0.1, metric = "euclidean") {
   if (!requireNamespace("uwot", quietly = TRUE)) {
     stop("The 'uwot' package is required for UMAP. Please install it with install.packages('uwot').")
@@ -2801,6 +3419,17 @@ umap_plot <- function(data, meta, color_package = TRUE, n_neighbors = 15, min_di
   })
 }
 
+#' Dimension Reduction Dispatcher
+#'
+#' Calls PCA, t-SNE, or UMAP depending on method string.
+#'
+#' @param data Expression matrix.
+#' @param meta Metadata table.
+#' @param method One of: "PCA", "tSNE", or "UMAP".
+#' @param color_package Logical. Use global color palette.
+#'
+#' @return A printed ggplot dimension reduction result.
+#' @export
 dim_func <- function(data, meta, method, color_package = TRUE){
   plot_obj <- switch(method,
                      "PCA"       = pca_plot(data, meta, color_package),
@@ -2810,22 +3439,15 @@ dim_func <- function(data, meta, method, color_package = TRUE){
   print(plot_obj)
 }
 
-customSpinnerWrapper <- function(plotExpr, workmode = "default") {
-  if (workmode == "funny") {
-    withSpinner(
-      plotExpr,
-      image = "loading/cat_loading.gif"
-    )
-  } else {
-    withSpinner(
-      plotExpr,
-      type = 1,
-      color = "#337ab7",
-      size = 1
-    )
-  }
-}
-
+#' Custom Spinner Wrapper
+#'
+#' Wraps plots in a loading spinner. If funny mode is on, uses random GIFs.
+#'
+#' @param plotExpr Plot expression (e.g., plotOutput).
+#' @param workmode "default" or "funny".
+#'
+#' @return UI element with spinner animation.
+#' @export
 customSpinnerWrapper <- function(plotExpr, workmode = "default") {
   if (workmode == "funny") {
     gif_files <- list.files("www/loading", pattern = "\\.gif$", full.names = FALSE)
@@ -2858,6 +3480,16 @@ customSpinnerWrapper <- function(plotExpr, workmode = "default") {
   }
 }
 
+#' Transform Setup Metadata
+#'
+#' Converts and aligns metadata columns with expression data column names.
+#'
+#' @param data Expression matrix.
+#' @param meta Raw metadata (Setup format).
+#' @param sort Logical. Sort metadata by condition.
+#'
+#' @return Cleaned metadata frame with columns 'sample' and 'condition'.
+#' @export
 transform_meta <- function(data, meta, sort=TRUE){
   meta <- meta[, c("File Name", "Condition")]
   colnames(meta) <- c("sample", "condition")
